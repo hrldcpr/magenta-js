@@ -26,6 +26,7 @@
   },
   "homepage": "https://github.com/tensorflow/magenta-js/tree/master/music_vae/#readme",
   "devDependencies": {
+    "@types/jasmine": "^2.8.7",
     "browserify": "^15.2.0",
     "http-server": "^0.11.1",
     "tsify": "^3.0.4",
