@@ -662,21 +662,28 @@ class MusicVAE {
    *   | . . . . |
    *   | B . . D |
    * where the letters represent the reconstructions of the four inputs, in
-   * alphabetical order, and there are `numInterps` sequences on each
-   * edge for a total of `numInterps`^2 sequences.
+   * alphabetical order, and there are `numInterps` sequences in each row and
+   * `numRows` rows for a total of `numInterps * numRows` sequences.
    *
    * @param inputSequences An array of 2 or 4 `NoteSequence`s to interpolate
    * between.
    * @param numInterps The number of pairwise interpolation sequences to
-   * return, including the reconstructions. If 4 inputs are given, the total
-   * number of sequences will be `numInterps`^2.
+   * return, including the reconstructions.
+   * @param numRows The number of rows, if 4 inputs are given. Defaults to
+   * `numInterps`, in which case the output is a square.
    *
    * @returns An array of interpolation `NoteSequence` objects, as described
    * above.
    */
-  async interpolate(inputSequences: INoteSequence[], numInterps: number) {
+  async interpolate(
+    inputSequences: INoteSequence[],
+    numInterps: number,
+    numRows?: number
+  ) {
     const inputZs = await this.encode(inputSequences);
-    const interpZs = tf.tidy(() => this.getInterpolatedZs(inputZs, numInterps));
+    const interpZs = tf.tidy(() =>
+      this.getInterpolatedZs(inputZs, numInterps, numRows)
+    );
     inputZs.dispose();
 
     const outputSequenes = this.decode(interpZs);
@@ -727,42 +734,53 @@ class MusicVAE {
     return outputSequences;
   }
 
-  private getInterpolatedZs(z: tf.Tensor2D, numInterps: number) {
+  private getInterpolatedZs(
+    z: tf.Tensor2D,
+    numInterps: number,
+    numRows?: number
+  ) {
     if (z.shape[0] !== 2 && z.shape[0] !== 4) {
       throw new Error(
           'Invalid number of input sequences. Requires length 2, or 4');
     }
+    if (z.shape[0] === 2 && numRows !== undefined) {
+      throw new Error('numRows can only be specified for 4 input sequences.');
+    }
+
+    const w = numInterps;
+    const h = numRows === undefined ? numInterps : numRows;
 
     // Compute the interpolations of the latent variable.
     const interpolatedZs: tf.Tensor2D = tf.tidy(() => {
-      const rangeArray = tf.linspace(0.0, 1.0, numInterps);
+      const rangeX = tf.linspace(0.0, 1.0, w);
 
       const z0 = z.slice([0, 0], [1, z.shape[1]]).as1D();
       const z1 = z.slice([1, 0], [1, z.shape[1]]).as1D();
 
       if (z.shape[0] === 2) {
         const zDiff = z1.sub(z0) as tf.Tensor1D;
-        return tf.outerProduct(rangeArray, zDiff).add(z0) as tf.Tensor2D;
+        return tf.outerProduct(rangeX, zDiff).add(z0) as tf.Tensor2D;
       } else if (z.shape[0] === 4) {
+        const rangeY = tf.linspace(0.0, 1.0, h);
         const z2 = z.slice([2, 0], [1, z.shape[1]]).as1D();
         const z3 = z.slice([3, 0], [1, z.shape[1]]).as1D();
 
-        const revRangeArray = tf.scalar(1.0).sub(rangeArray) as tf.Tensor1D;
+        const revRangeX = tf.scalar(1.0).sub(rangeX) as tf.Tensor1D;
+        const revRangeY = tf.scalar(1.0).sub(rangeY) as tf.Tensor1D;
 
-        const r = numInterps;
         let finalZs =
-            z0.mul(tf.outerProduct(revRangeArray, revRangeArray).as3D(r, r, 1));
+            z0.mul(tf.outerProduct(revRangeY, revRangeX).as3D(h, w, 1));
         finalZs = tf.addStrict(
             finalZs,
-            z1.mul(tf.outerProduct(rangeArray, revRangeArray).as3D(r, r, 1)));
+            z1.mul(tf.outerProduct(rangeY, revRangeX).as3D(h, w, 1)));
         finalZs = tf.addStrict(
             finalZs,
-            z2.mul(tf.outerProduct(revRangeArray, rangeArray).as3D(r, r, 1)));
+            z2.mul(tf.outerProduct(revRangeY, rangeX).as3D(h, w, 1)));
         finalZs = tf.addStrict(
             finalZs,
-            z3.mul(tf.outerProduct(rangeArray, rangeArray).as3D(r, r, 1)));
+            z3.mul(tf.outerProduct(rangeY, rangeX).as3D(h, w, 1)));
 
-        return finalZs.as2D(r * r, z.shape[1]);
+        return finalZs.as2D(w * h, z.shape[1]);
       } else {
         throw new Error(
             'Invalid number of note sequences. Requires length 2, or 4');
